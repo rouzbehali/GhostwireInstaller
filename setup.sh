@@ -13,6 +13,7 @@ BOLD="\033[1m"
 DIM="\033[2m"
 NC="\033[0m"
 INSTALL_MODE=""
+BINARY_SUFFIX=""
 
 p_banner() {
     clear
@@ -87,11 +88,18 @@ check_prerequisites() {
         exit 1
     fi
     p_ok "Root access: OK"
-    if [ "$(uname -m)" != "x86_64" ]; then
-        p_err "Faghat x86_64 (64-bit) support mishe! (Only x86_64 is supported.)"
+    local arch
+    arch=$(uname -m)
+    if [ "$arch" = "x86_64" ]; then
+        BINARY_SUFFIX=""
+        p_ok "CPU: x86_64 — OK"
+    elif [ "$arch" = "aarch64" ] || [ "$arch" = "arm64" ]; then
+        BINARY_SUFFIX="-arm64"
+        p_ok "CPU: arm64 — OK"
+    else
+        p_err "Faghat x86_64 va arm64 support mishe! (Unsupported architecture: ${arch})"
         exit 1
     fi
-    p_ok "CPU: x86_64 - OK"
     if [ "$(uname -s)" != "Linux" ]; then
         p_err "Faghat Linux support mishe!"
         exit 1
@@ -188,27 +196,30 @@ ask_location() {
 
 download_binary() {
     local bin_name="$1"
-    local bin_url="https://github.com/${GITHUB_REPO}/releases/${GW_VERSION}/download/${bin_name}"
+    local dl_name="${bin_name}${BINARY_SUFFIX}"
+    local base_url="${GW_MIRROR_BASE_URL:-https://github.com/${GITHUB_REPO}/releases/${GW_VERSION}/download}"
+    local bin_url="${base_url}/${dl_name}"
     local sha_url="${bin_url}.sha256"
-    p_info "Daryaft: ${bin_name} (Downloading binary)"
+    p_info "Daryaft: ${dl_name} (Downloading binary)"
     if command -v wget &>/dev/null; then
-        wget -q --show-progress "$bin_url" -O "/tmp/${bin_name}"
-        wget -q "$sha_url" -O "/tmp/${bin_name}.sha256"
+        wget -q --show-progress "$bin_url" -O "/tmp/${dl_name}"
+        wget -q "$sha_url" -O "/tmp/${dl_name}.sha256"
     else
-        curl -L --progress-bar "$bin_url" -o "/tmp/${bin_name}"
-        curl -fsSL "$sha_url" -o "/tmp/${bin_name}.sha256"
+        curl -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"
+        curl -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"
     fi
     p_info "Hash-e file ro check mikonim... (Verifying checksum)"
-    cd /tmp && sha256sum -c "${bin_name}.sha256"
+    cd /tmp && sha256sum -c "${dl_name}.sha256"
     p_ok "File dorost darid - hash tamiz! (Checksum verified)"
-    install -m 755 "/tmp/${bin_name}" "/usr/local/bin/${bin_name}"
+    install -m 755 "/tmp/${dl_name}" "/usr/local/bin/${bin_name}"
     p_ok "Binary nasb shod dar: /usr/local/bin/${bin_name}"
 }
 
 install_systemd_service() {
-    local svc_name="$1"
-    local bin_path="/usr/local/bin/${svc_name}"
-    local conf_path="/etc/ghostwire/${svc_name##ghostwire-}.toml"
+    local bin_name="$1"
+    local svc_name="$2"
+    local bin_path="/usr/local/bin/${bin_name}"
+    local conf_path="/etc/ghostwire/${bin_name##ghostwire-}.toml"
     cat > "/etc/systemd/system/${svc_name}.service" <<EOF
 [Unit]
 Description=GhostWire ${svc_name}
@@ -219,6 +230,7 @@ Type=simple
 ExecStart=${bin_path} -c ${conf_path}
 Restart=always
 RestartSec=5
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
@@ -369,12 +381,22 @@ threads=4"
     TUNNEL_ARRAY="[${TUNNEL_ARRAY:1}]"
     p_sep
     echo ""
+    echo -e "  ${BLUE}${BOLD}7. Service Name - Nam-e Service${NC}"
+    p_info "Nam-e systemd service ke baraye auto-update restart mishe."
+    p_info "Default: ghostwire-server — agar esm-e digar dari, bezan."
+    p_ask "Service name [ghostwire-server]: "
+    read -r GW_SERVICE_NAME
+    GW_SERVICE_NAME="${GW_SERVICE_NAME:-ghostwire-server}"
+    p_ok "service_name: ${GW_SERVICE_NAME}"
+    p_sep
+    echo ""
     echo -e "  ${BLUE}${BOLD}Kholaseh-ye Config (Summary):${NC}"
     p_info "WebSocket: ${WS_HOST}:${WS_PORT}"
     p_info "mode: ${GW_MODE}"
     p_info "ws_pool_children: ${WS_POOL_CHILDREN}"
     p_info "Tunnels: ${TUNNEL_ARRAY}"
     p_info "Auto-update: ${AUTO_UPDATE}"
+    p_info "Service name: ${GW_SERVICE_NAME}"
     [ "$PANEL_ENABLED" = "true" ] && p_info "Panel: http://${PANEL_HOST}:${PANEL_PORT}/${PANEL_PATH}/"
     echo ""
     p_ask "Confirm? Zakhire beshe? [Y/n]: "
@@ -404,12 +426,19 @@ ws_send_batch_bytes=65536
 auto_update=${AUTO_UPDATE}
 update_check_interval=300
 update_check_on_startup=true
+service_name="${GW_SERVICE_NAME}"
 
 [auth]
 token="${token}"
+EOF
+    if [ "$GW_MODE" = "reverse" ]; then
+        cat >> /etc/ghostwire/server.toml <<EOF
 
 [tunnels]
 ports=${TUNNEL_ARRAY}
+EOF
+    fi
+    cat >> /etc/ghostwire/server.toml <<EOF
 
 [logging]
 level="info"
@@ -592,11 +621,11 @@ install_server() {
     p_step "Gam 3: Systemd Service (Step 3: Setup Service)"
     p_info "Systemd service ye daemon-e ke GhostWire ro khodkar shoru mikone."
     p_info "Agar server restart she, GhostWire khodesh shoru mishe."
-    install_systemd_service "ghostwire-server"
+    install_systemd_service "ghostwire-server" "${GW_SERVICE_NAME}"
     p_step "Gam 4: Nginx Setup (Step 4: Reverse Proxy)"
     setup_nginx_server
     p_step "Gam 5: Shoru-e Service (Step 5: Start Service)"
-    start_service "ghostwire-server"
+    start_service "${GW_SERVICE_NAME}"
     p_step "Nasb Tamam Shod! (Installation Complete!) 🎉"
     p_sep
     echo ""
@@ -721,12 +750,22 @@ configure_client() {
     fi
     p_sep
     echo ""
+    echo -e "  ${GREEN}${BOLD}6. Service Name - Nam-e Service${NC}"
+    p_info "Nam-e systemd service ke baraye auto-update restart mishe."
+    p_info "Default: ghostwire-client — agar esm-e digar dari, bezan."
+    p_ask "Service name [ghostwire-client]: "
+    read -r GW_SERVICE_NAME
+    GW_SERVICE_NAME="${GW_SERVICE_NAME:-ghostwire-client}"
+    p_ok "service_name: ${GW_SERVICE_NAME}"
+    p_sep
+    echo ""
     echo -e "  ${GREEN}${BOLD}Kholaseh (Summary):${NC}"
     p_info "Server URL: ${server_url}"
     p_info "mode: ${GW_MODE}"
     p_info "Tunnels: ${TUNNEL_ARRAY}"
     p_info "Token: ${auth_token:0:8}..."
     p_info "Auto-update: ${auto_update}"
+    p_info "Service name: ${GW_SERVICE_NAME}"
     echo ""
     p_ask "Confirm? Zakhire beshe? [Y/n]: "
     read -r CONFIRM
@@ -748,6 +787,7 @@ ws_send_batch_bytes=65536
 auto_update=${auto_update}
 update_check_interval=300
 update_check_on_startup=true
+service_name="${GW_SERVICE_NAME}"
 
 [reconnect]
 initial_delay=1
@@ -760,9 +800,15 @@ ips=[]
 host=""
 check_interval=300
 max_connection_time=1740
+EOF
+    if [ "$GW_MODE" = "direct" ]; then
+        cat >> /etc/ghostwire/client.toml <<EOF
 
 [tunnels]
 ports=${TUNNEL_ARRAY}
+EOF
+    fi
+    cat >> /etc/ghostwire/client.toml <<EOF
 
 [logging]
 level="info"
@@ -797,9 +843,9 @@ install_client() {
     p_step "Gam 3: Systemd Service (Step 3: Setup Service)"
     p_info "Systemd service ye daemon-e ke GhostWire ro khodkar shoru mikone."
     p_info "Agar server restart she, GhostWire khodesh vasl mishe."
-    install_systemd_service "ghostwire-client"
+    install_systemd_service "ghostwire-client" "${GW_SERVICE_NAME}"
     p_step "Gam 4: Shoru-e Service (Step 4: Start Service)"
-    start_service "ghostwire-client"
+    start_service "${GW_SERVICE_NAME}"
     p_step "Nasb Tamam Shod! (Installation Complete!) 🎉"
     p_sep
     echo ""

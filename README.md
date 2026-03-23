@@ -122,11 +122,11 @@ The script detects your location, confirms you want **Abroad Client** mode, then
 
 WS pool works in direct modes as well when using WebSocket transport.
 
-For direct mode egress proxying, set these on server config (`/etc/ghostwire/server.toml`):
+For reverse/direct tunnel egress proxying, set these on server config (`/etc/ghostwire/server.toml`):
 
 ```toml
-direct_http_proxy="http://127.0.0.1:8080"
-direct_https_proxy="http://127.0.0.1:8080"
+http_proxy="http://127.0.0.1:8080"
+https_proxy="http://127.0.0.1:8080"
 ```
 
 ---
