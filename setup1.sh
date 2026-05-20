@@ -84,7 +84,7 @@ p_panel_box() {
 check_prerequisites() {
     p_step "Pish-niaz-ha ro check mikonim... (Checking prerequisites)"
     if [ "$EUID" -ne 0 ]; then
-        p_err "Bayad ba sudo ejra koni! Run with: sudo bash setup.sh"
+        p_err "Bayad ba sudo ejra koni! Run with: sudo bash setup1.sh"
         exit 1
     fi
     p_ok "Root access: OK"
@@ -204,7 +204,7 @@ download_binary() {
     # Proxy configuration
     local PROXY="http://127.0.0.1:10808"
     
-    p_info "=== Starting binary download process ==="
+    p_info "=== Starting binary download process RD Ver ==="
     p_info "Daryaft: ${dl_name} (Downloading binary)"
     p_info "Binary name: ${bin_name}"
     p_info "Download filename: ${dl_name}"
@@ -835,7 +835,7 @@ install_server() {
     echo ""
     echo -e "  ${BLUE}${BOLD}Gam Baadi (Next Step):${NC}"
     echo -e "  ${BLUE}ℹ${NC}  Boro sar server-e kharej (Netherlands/Germany/etc)"
-    echo -e "  ${BLUE}ℹ${NC}  Inja ejra kon:  sudo ./setup.sh"
+    echo -e "  ${BLUE}ℹ${NC}  Inja ejra kon:  sudo ./setup1.sh"
     echo -e "  ${BLUE}ℹ${NC}  Entekhab kon:   Kharej Client"
     echo -e "  ${BLUE}ℹ${NC}  URL server:     wss://YOUR-IRAN-DOMAIN/ws  (ya direct IP:PORT)"
     echo -e "  ${BLUE}ℹ${NC}  Token:          Hamoon chi ke bala save kardi"
