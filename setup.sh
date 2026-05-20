@@ -200,19 +200,199 @@ download_binary() {
     local base_url="${GW_MIRROR_BASE_URL:-https://github.com/${GITHUB_REPO}/releases/${GW_VERSION}/download}"
     local bin_url="${base_url}/${dl_name}"
     local sha_url="${bin_url}.sha256"
+    
+    p_info "=== Starting binary download process ==="
     p_info "Daryaft: ${dl_name} (Downloading binary)"
-    if command -v wget &>/dev/null; then
-        wget -q --show-progress "$bin_url" -O "/tmp/${dl_name}"
-        wget -q "$sha_url" -O "/tmp/${dl_name}.sha256"
-    else
-        curl -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"
-        curl -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"
+    p_info "Binary name: ${bin_name}"
+    p_info "Download filename: ${dl_name}"
+    p_info "Base URL: ${base_url}"
+    p_info "Binary URL: ${bin_url}"
+    p_info "Checksum URL: ${sha_url}"
+    
+    # Check if binary already exists locally
+    if [[ -f "/usr/local/bin/${bin_name}" ]]; then
+        p_info "Binary already exists at /usr/local/bin/${bin_name}, will overwrite after download"
     fi
+    
+    # Check internet connectivity
+    p_info "Checking internet connectivity..."
+    if ping -c 1 -W 2 github.com &>/dev/null; then
+        p_info "✓ Internet connectivity detected (github.com reachable)"
+    else
+        p_warn "⚠ GitHub.com not pingable, but continuing with download attempt"
+    fi
+    
+    # Check if download directory is writable
+    if [[ -w "/tmp" ]]; then
+        p_info "✓ /tmp directory is writable"
+    else
+        p_error "✗ /tmp directory is not writable, cannot proceed"
+        return 1
+    fi
+    
+    # Check for required download tools
+    p_info "Checking for download utilities..."
+    if command -v wget &>/dev/null; then
+        p_info "✓ wget found (version: $(wget --version | head -1))"
+        local download_tool="wget"
+    elif command -v curl &>/dev/null; then
+        p_info "✓ curl found (version: $(curl --version | head -1))"
+        local download_tool="curl"
+    else
+        p_error "✗ Neither wget nor curl is available. Please install one of them."
+        return 1
+    fi
+    
+    # Download binary
+    p_info "Starting download from: ${bin_url}"
+    if [[ "$download_tool" == "wget" ]]; then
+        p_info "Using wget with show-progress option..."
+        if wget -q --show-progress "$bin_url" -O "/tmp/${dl_name}"; then
+            p_info "✓ Binary download completed successfully"
+            p_info "File saved to: /tmp/${dl_name}"
+            local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
+            p_info "Downloaded binary size: ${binary_size} bytes"
+        else
+            p_error "✗ Binary download failed with wget"
+            p_error "URL attempted: ${bin_url}"
+            return 1
+        fi
+        
+        p_info "Downloading checksum file from: ${sha_url}"
+        if wget -q "$sha_url" -O "/tmp/${dl_name}.sha256"; then
+            p_info "✓ Checksum file downloaded successfully"
+            p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
+        else
+            p_error "✗ Checksum file download failed"
+            p_error "URL attempted: ${sha_url}"
+            return 1
+        fi
+    else
+        p_info "Using curl with progress-bar option..."
+        p_info "Downloading binary..."
+        if curl -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"; then
+            p_info "✓ Binary download completed successfully"
+            p_info "File saved to: /tmp/${dl_name}"
+            local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
+            p_info "Downloaded binary size: ${binary_size} bytes"
+        else
+            local curl_exit_code=$?
+            p_error "✗ Binary download failed with curl (exit code: ${curl_exit_code})"
+            p_error "URL attempted: ${bin_url}"
+            return 1
+        fi
+        
+        p_info "Downloading checksum file from: ${sha_url}"
+        if curl -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"; then
+            p_info "✓ Checksum file downloaded successfully"
+            p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
+        else
+            p_error "✗ Checksum file download failed"
+            p_error "URL attempted: ${sha_url}"
+            return 1
+        fi
+    fi
+    
+    # Verify files exist after download
+    if [[ -f "/tmp/${dl_name}" ]]; then
+        p_info "✓ Binary file exists at /tmp/${dl_name}"
+    else
+        p_error "✗ Binary file missing after download attempt"
+        return 1
+    fi
+    
+    if [[ -f "/tmp/${dl_name}.sha256" ]]; then
+        p_info "✓ Checksum file exists at /tmp/${dl_name}.sha256"
+        p_info "Checksum file content: $(cat /tmp/${dl_name}.sha256)"
+    else
+        p_error "✗ Checksum file missing after download attempt"
+        return 1
+    fi
+    
+    # Verify checksum
     p_info "Hash-e file ro check mikonim... (Verifying checksum)"
-    cd /tmp && sha256sum -c "${dl_name}.sha256"
-    p_ok "File dorost darid - hash tamiz! (Checksum verified)"
-    install -m 755 "/tmp/${dl_name}" "/usr/local/bin/${bin_name}"
-    p_ok "Binary nasb shod dar: /usr/local/bin/${bin_name}"
+    p_info "Changing to /tmp directory for checksum verification"
+    cd /tmp || {
+        p_error "✗ Failed to change directory to /tmp"
+        return 1
+    }
+    
+    p_info "Running: sha256sum -c ${dl_name}.sha256"
+    if sha256sum -c "${dl_name}.sha256" 2>&1 | tee /tmp/sha256_output.log; then
+        p_ok "✓ File dorost darid - hash tamiz! (Checksum verified)"
+        p_info "SHA256 verification passed successfully"
+    else
+        p_error "✗ Checksum verification failed!"
+        p_error "Expected checksum: $(cat ${dl_name}.sha256)"
+        p_error "Actual checksum: $(sha256sum ${dl_name} 2>/dev/null || echo 'Failed to compute')"
+        return 1
+    fi
+    
+    # Install binary
+    p_info "Installing binary to /usr/local/bin/${bin_name}"
+    p_info "Setting permissions: 755 (rwxr-xr-x)"
+    
+    # Check if we have write permission to /usr/local/bin
+    if [[ -w "/usr/local/bin" ]]; then
+        p_info "✓ /usr/local/bin is writable"
+    else
+        p_warn "⚠ /usr/local/bin is not writable, attempting with sudo if available..."
+        if command -v sudo &>/dev/null; then
+            p_info "Using sudo for installation"
+            if sudo install -m 755 "/tmp/${dl_name}" "/usr/local/bin/${bin_name}"; then
+                p_info "✓ Installation with sudo successful"
+            else
+                p_error "✗ Installation with sudo failed"
+                return 1
+            fi
+        else
+            p_error "✗ Cannot install: /usr/local/bin not writable and sudo not available"
+            return 1
+        fi
+    fi
+    
+    # Regular install without sudo
+    if install -m 755 "/tmp/${dl_name}" "/usr/local/bin/${bin_name}" 2>/dev/null; then
+        p_info "✓ Binary installed directly (no sudo needed)"
+    elif [[ -w "/usr/local/bin" ]]; then
+        p_info "✓ Binary installed successfully"
+    fi
+    
+    # Verify installation
+    if [[ -f "/usr/local/bin/${bin_name}" ]]; then
+        p_ok "✓ Binary nasb shod dar: /usr/local/bin/${bin_name}"
+        local installed_size=$(stat -c%s "/usr/local/bin/${bin_name}" 2>/dev/null || stat -f%z "/usr/local/bin/${bin_name}" 2>/dev/null)
+        p_info "Installed binary size: ${installed_size} bytes"
+        
+        # Check if binary is executable
+        if [[ -x "/usr/local/bin/${bin_name}" ]]; then
+            p_info "✓ Binary is executable"
+        else
+            p_warn "⚠ Binary is not executable, attempting to fix..."
+            chmod +x "/usr/local/bin/${bin_name}" && p_info "✓ Fixed executable permission"
+        fi
+        
+        # Verify binary works (optional - run --version if available)
+        if [[ "${bin_name}" != *".sh"* ]] && command -v "${bin_name}" &>/dev/null; then
+            p_info "Testing binary execution..."
+            if "${bin_name}" --version &>/dev/null; then
+                p_info "✓ Binary executed successfully with --version"
+            else
+                p_info "Binary doesn't support --version, skipping test"
+            fi
+        fi
+    else
+        p_error "✗ Installation failed - binary not found at /usr/local/bin/${bin_name}"
+        return 1
+    fi
+    
+    # Cleanup temporary files
+    p_info "Cleaning up temporary files..."
+    rm -f "/tmp/${dl_name}" "/tmp/${dl_name}.sha256" "/tmp/sha256_output.log"
+    p_info "✓ Temporary files removed from /tmp"
+    
+    p_info "=== Binary download and installation completed successfully ==="
+    return 0
 }
 
 install_systemd_service() {
