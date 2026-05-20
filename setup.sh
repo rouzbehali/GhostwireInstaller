@@ -201,6 +201,9 @@ download_binary() {
     local bin_url="${base_url}/${dl_name}"
     local sha_url="${bin_url}.sha256"
     
+    # Proxy configuration
+    local PROXY="http://127.0.0.1:10808"
+    
     p_info "=== Starting binary download process ==="
     p_info "Daryaft: ${dl_name} (Downloading binary)"
     p_info "Binary name: ${bin_name}"
@@ -208,18 +211,19 @@ download_binary() {
     p_info "Base URL: ${base_url}"
     p_info "Binary URL: ${bin_url}"
     p_info "Checksum URL: ${sha_url}"
+    p_info "Proxy enabled: ${PROXY}"
     
     # Check if binary already exists locally
     if [[ -f "/usr/local/bin/${bin_name}" ]]; then
         p_info "Binary already exists at /usr/local/bin/${bin_name}, will overwrite after download"
     fi
     
-    # Check internet connectivity
-    p_info "Checking internet connectivity..."
-    if ping -c 1 -W 2 github.com &>/dev/null; then
-        p_info "✓ Internet connectivity detected (github.com reachable)"
+    # Check internet connectivity through proxy
+    p_info "Checking internet connectivity via proxy..."
+    if curl -x "${PROXY}" -s --connect-timeout 5 https://github.com &>/dev/null; then
+        p_info "✓ Internet connectivity detected through proxy (github.com reachable)"
     else
-        p_warn "⚠ GitHub.com not pingable, but continuing with download attempt"
+        p_warn "⚠ GitHub.com not reachable through proxy, but continuing with download attempt"
     fi
     
     # Check if download directory is writable
@@ -243,11 +247,11 @@ download_binary() {
         return 1
     fi
     
-    # Download binary
+    # Download binary with inline proxy
     p_info "Starting download from: ${bin_url}"
     if [[ "$download_tool" == "wget" ]]; then
-        p_info "Using wget with show-progress option..."
-        if wget -q --show-progress "$bin_url" -O "/tmp/${dl_name}"; then
+        p_info "Using wget with show-progress option (via proxy ${PROXY})..."
+        if wget -q --show-progress -e use_proxy=yes -e http_proxy="${PROXY}" -e https_proxy="${PROXY}" "$bin_url" -O "/tmp/${dl_name}"; then
             p_info "✓ Binary download completed successfully"
             p_info "File saved to: /tmp/${dl_name}"
             local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
@@ -255,11 +259,12 @@ download_binary() {
         else
             p_error "✗ Binary download failed with wget"
             p_error "URL attempted: ${bin_url}"
+            p_error "Proxy used: ${PROXY}"
             return 1
         fi
         
         p_info "Downloading checksum file from: ${sha_url}"
-        if wget -q "$sha_url" -O "/tmp/${dl_name}.sha256"; then
+        if wget -q -e use_proxy=yes -e http_proxy="${PROXY}" -e https_proxy="${PROXY}" "$sha_url" -O "/tmp/${dl_name}.sha256"; then
             p_info "✓ Checksum file downloaded successfully"
             p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
         else
@@ -268,9 +273,9 @@ download_binary() {
             return 1
         fi
     else
-        p_info "Using curl with progress-bar option..."
+        p_info "Using curl with progress-bar option (via proxy ${PROXY})..."
         p_info "Downloading binary..."
-        if curl -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"; then
+        if curl -x "${PROXY}" -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"; then
             p_info "✓ Binary download completed successfully"
             p_info "File saved to: /tmp/${dl_name}"
             local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
@@ -279,11 +284,12 @@ download_binary() {
             local curl_exit_code=$?
             p_error "✗ Binary download failed with curl (exit code: ${curl_exit_code})"
             p_error "URL attempted: ${bin_url}"
+            p_error "Proxy used: ${PROXY}"
             return 1
         fi
         
         p_info "Downloading checksum file from: ${sha_url}"
-        if curl -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"; then
+        if curl -x "${PROXY}" -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"; then
             p_info "✓ Checksum file downloaded successfully"
             p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
         else
