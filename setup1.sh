@@ -1115,6 +1115,58 @@ EOF
     return 0
 }
 
+install_server() {
+    p_sep
+    echo ""
+    echo -e "  ${BLUE}${BOLD}🇮🇷  Iran Server Mode${NC}"
+    echo ""
+    p_info "In server darun-e Iran nasb mishe."
+    p_info "Vazife: Port-haye local ro listen kone va traffic ro az tunel forward kone."
+    p_info "Kharej (client) az birun be in server vasl mishe."
+    echo ""
+    p_sep
+    p_step "Gam 1: Daryaft va Nasb-e Binary (Step 1: Download & Install)"
+    download_binary "ghostwire-server"
+    p_step "Gam 2: Tanzim-e Config (Step 2: Configure)"
+    configure_server
+    p_step "Gam 3: Systemd Service (Step 3: Setup Service)"
+    p_info "Systemd service ye daemon-e ke GhostWire ro khodkar shoru mikone."
+    p_info "Agar server restart she, GhostWire khodesh shoru mishe."
+    install_systemd_service "ghostwire-server" "${GW_SERVICE_NAME}"
+    p_step "Gam 4: Nginx Setup (Step 4: Reverse Proxy)"
+    setup_nginx_server
+    p_step "Gam 5: Shoru-e Service (Step 5: Start Service)"
+    start_service "${GW_SERVICE_NAME}"
+    p_step "Nasb Tamam Shod! (Installation Complete!) 🎉"
+    p_sep
+    echo ""
+    echo -e "  ${BLUE}${BOLD}✓  GhostWire Server dar Iran nasb shod!${NC}"
+    echo ""
+    echo -e "  ${BLUE}ℹ${NC}  Config: /etc/ghostwire/server.toml"
+    echo -e "  ${BLUE}ℹ${NC}  Log file: /var/log/ghostwire-server.log"
+    echo ""
+    echo -e "  ${BLUE}${BOLD}Dastorat (Useful Commands):${NC}"
+    echo ""
+    echo -e "  ${BLUE}sudo systemctl status ghostwire-server${NC}   - Status check"
+    echo -e "  ${BLUE}sudo systemctl restart ghostwire-server${NC}  - Restart kone"
+    echo -e "  ${BLUE}sudo systemctl stop ghostwire-server${NC}     - Stop kone"
+    echo -e "  ${BLUE}sudo journalctl -u ghostwire-server -f${NC}   - Live log"
+    echo -e "  ${BLUE}sudo ghostwire-server update${NC}             - Manual update"
+    echo ""
+    p_warn "Faramosh Nakoni: Token ro ke bala neshon dade shod, save kon!"
+    p_warn "Baraye nasb-e client-e kharej, token lazem dari."
+    echo ""
+    p_sep
+    echo ""
+    echo -e "  ${BLUE}${BOLD}Gam Baadi (Next Step):${NC}"
+    echo -e "  ${BLUE}ℹ${NC}  Boro sar server-e kharej (Netherlands/Germany/etc)"
+    echo -e "  ${BLUE}ℹ${NC}  Inja ejra kon:  sudo ./setup.sh"
+    echo -e "  ${BLUE}ℹ${NC}  Entekhab kon:   Kharej Client"
+    echo -e "  ${BLUE}ℹ${NC}  URL server:     wss://YOUR-IRAN-DOMAIN/ws  (ya direct IP:PORT)"
+    echo -e "  ${BLUE}ℹ${NC}  Token:          Hamoon chi ke bala save kardi"
+    echo ""
+}
+
 install_client() {
     p_sep
     echo ""
