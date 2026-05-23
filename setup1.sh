@@ -19,7 +19,7 @@ p_banner() {
     clear
     echo -e "${CYAN}${BOLD}"
     echo "  ============================================================"
-    echo "    👻  GhostWire Easy Installer  |  Nasb-e Rahat            "
+    echo "    👻  v2 GhostWire Easy Installer  |  Nasb-e Rahat            "
     echo "    Anti-Censorship Reverse Tunnel  |  Tunnel Zed-e Sansor   "
     echo "  ============================================================"
     echo -e "${NC}"
@@ -215,7 +215,69 @@ download_binary() {
     
     # Check if binary already exists locally
     if [[ -f "/usr/local/bin/${bin_name}" ]]; then
-        p_info "Binary already exists at /usr/local/bin/${bin_name}, will overwrite after download"
+        local existing_size=$(stat -c%s "/usr/local/bin/${bin_name}" 2>/dev/null || stat -f%z "/usr/local/bin/${bin_name}" 2>/dev/null)
+        local existing_size_mb=$(echo "scale=2; $existing_size / 1048576" | bc)
+        p_info "Binary already exists at /usr/local/bin/${bin_name}"
+        p_info "Existing binary size: ${existing_size_mb} MB (${existing_size} bytes)"
+        
+        # Ask user what to do
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════"
+        echo "  Binary already exists: /usr/local/bin/${bin_name}"
+        echo "  Size: ${existing_size_mb} MB"
+        echo "═══════════════════════════════════════════════════════════════"
+        echo ""
+        echo "What would you like to do?"
+        echo "  1) Run the existing binary (download canceled)"
+        echo "  2) Download and overwrite the existing binary"
+        echo "  3) Cancel (do nothing)"
+        echo ""
+        
+        local user_choice
+        while true; do
+            read -p "Enter your choice (1, 2, or 3): " user_choice
+            case "$user_choice" in
+                1)
+                    p_info "User chose to run the existing binary"
+                    if [[ -x "/usr/local/bin/${bin_name}" ]]; then
+                        p_ok "Running existing binary: ${bin_name}"
+                        echo ""
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "  Executing: /usr/local/bin/${bin_name}"
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo ""
+                        "/usr/local/bin/${bin_name}" "$@"
+                        local exit_code=$?
+                        echo ""
+                        if [[ $exit_code -eq 0 ]]; then
+                            p_ok "Binary execution completed successfully"
+                        else
+                            p_error "Binary execution failed with exit code: ${exit_code}"
+                        fi
+                        return $exit_code
+                    else
+                        p_error "Existing binary is not executable. Please check permissions."
+                        p_info "Proceeding to download option..."
+                        # Fall through to download
+                    fi
+                    break
+                    ;;
+                2)
+                    p_info "User chose to download and overwrite existing binary"
+                    p_info "Proceeding with download..."
+                    break
+                    ;;
+                3)
+                    p_info "User chose to cancel the operation"
+                    p_warn "Download canceled by user"
+                    return 1
+                    ;;
+                *)
+                    p_error "Invalid choice. Please enter 1, 2, or 3."
+                    ;;
+            esac
+        done
+        echo ""
     fi
     
     # Check internet connectivity through proxy
@@ -651,13 +713,148 @@ setup_nginx_server() {
         p_info "Port WS-e server ro (${WS_PORT}) direct expose kon ya bad nasb kon."
         return
     fi
-    p_info "Nasb-e nginx va certbot..."
-    apt-get update -qq && apt-get install -y -qq nginx certbot python3-certbot-nginx
-    p_ok "nginx va certbot nasb shod."
+    
+    # Proxy configuration
+    local PROXY="http://127.0.0.1:10808"
+    
+    p_info "=== Starting Nginx setup process with proxy support ==="
+    p_info "Proxy enabled: ${PROXY}"
+    
+    # Check internet connectivity through proxy
+    p_info "Checking internet connectivity via proxy..."
+    if curl -x "${PROXY}" -s --connect-timeout 5 https://deb.debian.org &>/dev/null || \
+       curl -x "${PROXY}" -s --connect-timeout 5 https://archive.ubuntu.com &>/dev/null; then
+        p_info "✓ Internet connectivity detected through proxy (APT repositories reachable)"
+    else
+        p_warn "⚠ Package repositories not reachable through proxy, but continuing with installation attempt"
+    fi
+    
+    # Check for apt-get availability
+    p_info "Checking for package manager..."
+    if command -v apt-get &>/dev/null; then
+        p_info "✓ apt-get found (Debian/Ubuntu based system)"
+        local pkg_manager="apt-get"
+    elif command -v yum &>/dev/null; then
+        p_info "✓ yum found (RHEL/CentOS based system)"
+        local pkg_manager="yum"
+    elif command -v dnf &>/dev/null; then
+        p_info "✓ dnf found (Fedora based system)"
+        local pkg_manager="dnf"
+    else
+        p_error "✗ No supported package manager found (apt-get, yum, or dnf required)"
+        return 1
+    fi
+    
+    # Configure APT to use proxy if it's Debian/Ubuntu
+    p_info "Configuring package manager for proxy usage..."
+    if [[ "$pkg_manager" == "apt-get" ]]; then
+        # Create apt proxy configuration file
+        local APT_PROXY_CONF="/etc/apt/apt.conf.d/95-proxy.conf"
+        p_info "Creating APT proxy configuration at: ${APT_PROXY_CONF}"
+        
+        cat > "$APT_PROXY_CONF" <<EOF
+Acquire::http::Proxy "${PROXY}";
+Acquire::https::Proxy "${PROXY}";
+EOF
+        p_info "✓ APT proxy configuration created"
+        
+        # Show the configuration
+        p_info "APT proxy config content:"
+        cat "$APT_PROXY_CONF" | while read line; do
+            p_info "  $line"
+        done
+    elif [[ "$pkg_manager" == "yum" ]] || [[ "$pkg_manager" == "dnf" ]]; then
+        # For yum/dnf, set proxy in /etc/yum.conf
+        local YUM_PROXY_CONF="/etc/yum.conf"
+        if grep -q "^proxy=" "$YUM_PROXY_CONF" 2>/dev/null; then
+            p_warn "Proxy already configured in yum.conf, updating..."
+            sed -i "s|^proxy=.*|proxy=${PROXY}|" "$YUM_PROXY_CONF"
+        else
+            p_info "Adding proxy configuration to ${YUM_PROXY_CONF}"
+            echo "proxy=${PROXY}" >> "$YUM_PROXY_CONF"
+        fi
+        p_info "✓ YUM/DNF proxy configuration updated"
+    fi
+    
+    # Test package manager with proxy
+    p_info "Testing package manager connectivity via proxy..."
+    if [[ "$pkg_manager" == "apt-get" ]]; then
+        p_info "Running: apt-get update with proxy..."
+        if apt-get update -qq 2>&1 | tee /tmp/apt_update.log; then
+            p_info "✓ apt-get update successful via proxy"
+        else
+            p_warn "⚠ apt-get update had issues, but continuing..."
+            p_info "Check /tmp/apt_update.log for details"
+        fi
+    fi
+    
+    # Install nginx and certbot with detailed output
+    p_info "Nasb-e nginx va certbot... (Installing nginx and certbot)"
+    p_info "This may take a few minutes depending on your connection speed..."
+    
+    if [[ "$pkg_manager" == "apt-get" ]]; then
+        p_info "Installing packages: nginx, certbot, python3-certbot-nginx"
+        p_info "Using proxy: ${PROXY}"
+        
+        if apt-get install -y -qq nginx certbot python3-certbot-nginx 2>&1 | tee /tmp/apt_install.log; then
+            p_ok "✓ nginx va certbot nasb shod. (nginx and certbot installed)"
+            p_info "Installation logs saved to: /tmp/apt_install.log"
+        else
+            p_error "✗ Package installation failed"
+            p_error "Check /tmp/apt_install.log for details"
+            p_warn "Attempting to fix with: apt-get update --fix-missing"
+            apt-get update --fix-missing -qq
+            if apt-get install -y -qq nginx certbot python3-certbot-nginx; then
+                p_ok "✓ Installation succeeded after fix"
+            else
+                p_error "✗ Installation still failing, aborting nginx setup"
+                return 1
+            fi
+        fi
+    elif [[ "$pkg_manager" == "yum" ]]; then
+        p_info "Installing with yum: nginx, certbot, python3-certbot-nginx"
+        p_info "Note: You may need EPEL repository for certbot"
+        
+        # Enable EPEL for certbot
+        yum install -y epel-release
+        yum install -y nginx certbot python3-certbot-nginx
+        p_ok "✓ Packages installed via yum"
+    elif [[ "$pkg_manager" == "dnf" ]]; then
+        p_info "Installing with dnf: nginx, certbot, python3-certbot-nginx"
+        dnf install -y nginx certbot python3-certbot-nginx
+        p_ok "✓ Packages installed via dnf"
+    fi
+    
+    # Verify installations
+    p_info "Verifying installations..."
+    if command -v nginx &>/dev/null; then
+        local nginx_version=$(nginx -v 2>&1)
+        p_info "✓ nginx installed: ${nginx_version}"
+    else
+        p_error "✗ nginx installation failed"
+        return 1
+    fi
+    
+    if command -v certbot &>/dev/null; then
+        local certbot_version=$(certbot --version 2>&1)
+        p_info "✓ certbot installed: ${certbot_version}"
+    else
+        p_warn "⚠ certbot not found, trying alternative installation..."
+        if [[ "$pkg_manager" == "apt-get" ]]; then
+            apt-get install -y certbot python3-certbot-nginx
+        fi
+    fi
+    
+    # Backup existing nginx config if it exists
     if [ -f /etc/nginx/sites-available/ghostwire ]; then
+        p_info "Backing up existing ghostwire nginx config..."
+        cp /etc/nginx/sites-available/ghostwire /etc/nginx/sites-available/ghostwire.backup.$(date +%Y%m%d_%H%M%S)
+        p_info "✓ Backup created"
         rm -f /etc/nginx/sites-enabled/ghostwire /etc/nginx/sites-available/ghostwire
         systemctl is-active --quiet nginx && systemctl reload nginx
     fi
+    
+    # Get domain name
     echo ""
     p_ask "Domain-et ro bezan (meslan: tunnel.mysite.com): "
     read -r DOMAIN
@@ -666,6 +863,10 @@ setup_nginx_server() {
         p_ask "Domain: "
         read -r DOMAIN
     done
+    p_info "Domain set to: ${DOMAIN}"
+    
+    # Create initial nginx config for HTTP
+    p_info "Creating initial nginx configuration for HTTP challenge..."
     cat > /etc/nginx/sites-available/ghostwire <<EOF
 server {
     listen 80;
@@ -675,20 +876,78 @@ server {
     }
 }
 EOF
+    p_info "Initial nginx config created at: /etc/nginx/sites-available/ghostwire"
+    
+    # Enable site
     ln -sf /etc/nginx/sites-available/ghostwire /etc/nginx/sites-enabled/
-    nginx -t && systemctl reload nginx
-    p_ok "Nginx config aval sakhte shod."
+    p_info "Symbolic link created: /etc/nginx/sites-enabled/ghostwire -> /etc/nginx/sites-available/ghostwire"
+    
+    # Test and reload nginx
+    p_info "Testing nginx configuration..."
+    if nginx -t 2>&1 | tee /tmp/nginx_test.log; then
+        p_ok "✓ Nginx configuration syntax OK"
+        p_info "Reloading nginx..."
+        systemctl reload nginx
+        p_ok "✓ Nginx reloaded successfully"
+    else
+        p_error "✗ Nginx configuration test failed"
+        p_error "Check /tmp/nginx_test.log for details"
+        return 1
+    fi
+    
+    # Get TLS certificate
     echo ""
     p_ask "TLS certificate ba Let's Encrypt begirim? [y/N]: "
     read -r -n 1 TLS_REPLY
     echo ""
+    
     if [[ "$TLS_REPLY" =~ ^[Yy]$ ]]; then
-        certbot --nginx -d "$DOMAIN"
-        p_ok "TLS certificate gereft!"
+        p_info "=== Starting Let's Encrypt certificate issuance ==="
+        p_info "Domain: ${DOMAIN}"
+        p_info "Using proxy: ${PROXY}"
+        
+        # Create certbot configuration with proxy
+        p_info "Creating certbot CLI configuration with proxy..."
+        cat > /etc/letsencrypt/cli.ini <<EOF
+# Certbot configuration with proxy
+http_proxy = ${PROXY}
+https_proxy = ${PROXY}
+EOF
+        p_info "✓ Certbot proxy configuration created at: /etc/letsencrypt/cli.ini"
+        
+        # Run certbot with proxy environment variables
+        p_info "Running certbot with proxy support..."
+        export http_proxy="${PROXY}"
+        export https_proxy="${PROXY}"
+        
+        if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "admin@${DOMAIN}" 2>&1 | tee /tmp/certbot.log; then
+            p_ok "✓ TLS certificate gereft! (TLS certificate obtained)"
+            p_info "Certificate details:"
+            p_info "  - Domain: ${DOMAIN}"
+            p_info "  - Certificate path: /etc/letsencrypt/live/${DOMAIN}/fullchain.pem"
+            p_info "  - Private key path: /etc/letsencrypt/live/${DOMAIN}/privkey.pem"
+        else
+            p_warn "⚠ Automatic certificate issuance failed"
+            p_info "Check /tmp/certbot.log for details"
+            p_ask "Do you want to try certbot in interactive mode? [y/N]: "
+            read -r -n 1 INTERACTIVE_REPLY
+            echo ""
+            if [[ "$INTERACTIVE_REPLY" =~ ^[Yy]$ ]]; then
+                certbot --nginx -d "$DOMAIN"
+            else
+                p_warn "Skipping TLS certificate, continuing with HTTP only"
+            fi
+        fi
     fi
+    
+    # Get current WebSocket port
     local WS_PORT_CURRENT
     WS_PORT_CURRENT=$(grep "listen_port" /etc/ghostwire/server.toml | cut -d'=' -f2 | tr -d ' ')
     WS_PORT_CURRENT="${WS_PORT_CURRENT:-8443}"
+    p_info "WebSocket port detected: ${WS_PORT_CURRENT}"
+    
+    # Create final nginx configuration with WebSocket support
+    p_info "Creating final nginx configuration with WebSocket proxy..."
     cat > /etc/nginx/sites-available/ghostwire <<EOF
 server {
     listen 80;
@@ -700,13 +959,23 @@ server {
         return 301 https://\$server_name\$request_uri;
     }
 }
+
 server {
     listen 443 ssl http2;
     server_name ${DOMAIN};
+    
+    # SSL configuration
     ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+    
+    # Security headers
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    
+    # WebSocket endpoint
     location /ws {
         proxy_pass http://127.0.0.1:${WS_PORT_CURRENT};
         proxy_http_version 1.1;
@@ -714,33 +983,63 @@ server {
         proxy_set_header Connection "upgrade";
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_read_timeout 86400;
         proxy_send_timeout 86400;
         proxy_buffering off;
         proxy_request_buffering off;
         tcp_nodelay on;
     }
+    
+    # Default location
     location / {
         root /var/www/html;
         index index.html;
     }
 }
 EOF
-    nginx -t && systemctl reload nginx
-    p_ok "Nginx config kamel shod baraye: ${DOMAIN}"
+    p_info "Final nginx configuration saved to: /etc/nginx/sites-available/ghostwire"
+    
+    # Test final nginx configuration
+    p_info "Testing final nginx configuration..."
+    if nginx -t 2>&1 | tee -a /tmp/nginx_test.log; then
+        p_ok "✓ Final nginx configuration syntax OK"
+        systemctl reload nginx
+        p_ok "✓ Nginx reloaded with final configuration"
+    else
+        p_error "✗ Final nginx configuration test failed"
+        p_error "Check /tmp/nginx_test.log for details"
+        return 1
+    fi
+    
+    p_ok "Nginx config kamel shod baraye: ${DOMAIN} (Complete nginx configuration for: ${DOMAIN})"
+    
+    # Panel configuration (if enabled)
     local PANEL_ENABLED_CHECK
     PANEL_ENABLED_CHECK=$(grep "^enabled=true" /etc/ghostwire/server.toml 2>/dev/null | head -1 || true)
+    
     if [ -n "$PANEL_ENABLED_CHECK" ]; then
+        p_info "=== Panel configuration detected, setting up panel proxy ==="
         echo ""
         p_ask "Baraye panel ham yek domain-e joda mikhai? [y/N]: "
         read -r -n 1 PANEL_DOMAIN_REPLY
         echo ""
+        
         if [[ "$PANEL_DOMAIN_REPLY" =~ ^[Yy]$ ]]; then
             p_ask "Panel domain: "
             read -r PANEL_DOMAIN
+            p_info "Panel domain set to: ${PANEL_DOMAIN}"
+            
             local PANEL_PORT_CURRENT
             PANEL_PORT_CURRENT=$(grep "^port=" /etc/ghostwire/server.toml 2>/dev/null | tail -1 | cut -d'=' -f2 || echo "9090")
+            p_info "Panel port detected: ${PANEL_PORT_CURRENT}"
+            
+            # Backup existing panel config
             rm -f /etc/nginx/sites-enabled/ghostwire-panel /etc/nginx/sites-available/ghostwire-panel
+            
+            # Create initial panel config
+            p_info "Creating initial panel configuration..."
             cat > /etc/nginx/sites-available/ghostwire-panel <<EOF
 server {
     listen 80;
@@ -752,10 +1051,25 @@ server {
 EOF
             ln -sf /etc/nginx/sites-available/ghostwire-panel /etc/nginx/sites-enabled/
             nginx -t && systemctl reload nginx
+            p_ok "✓ Initial panel configuration created"
+            
             p_ask "TLS baraye domain-e panel? [y/N]: "
             read -r -n 1 PANEL_TLS
             echo ""
-            [[ "$PANEL_TLS" =~ ^[Yy]$ ]] && certbot --nginx -d "$PANEL_DOMAIN"
+            
+            if [[ "$PANEL_TLS" =~ ^[Yy]$ ]]; then
+                p_info "Obtaining TLS certificate for panel domain..."
+                export http_proxy="${PROXY}"
+                export https_proxy="${PROXY}"
+                if certbot --nginx -d "$PANEL_DOMAIN" --non-interactive --agree-tos --email "admin@${PANEL_DOMAIN}" 2>&1 | tee /tmp/certbot_panel.log; then
+                    p_ok "✓ TLS certificate obtained for panel"
+                else
+                    p_warn "⚠ Failed to obtain TLS certificate for panel"
+                fi
+            fi
+            
+            # Create final panel configuration
+            p_info "Creating final panel configuration..."
             cat > /etc/nginx/sites-available/ghostwire-panel <<EOF
 server {
     listen 80;
@@ -767,13 +1081,16 @@ server {
         return 301 https://\$server_name\$request_uri;
     }
 }
+
 server {
     listen 443 ssl http2;
     server_name ${PANEL_DOMAIN};
+    
     ssl_certificate /etc/letsencrypt/live/${PANEL_DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${PANEL_DOMAIN}/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+    
     location / {
         proxy_pass http://127.0.0.1:${PANEL_PORT_CURRENT};
         proxy_http_version 1.1;
@@ -785,225 +1102,17 @@ server {
 }
 EOF
             nginx -t && systemctl reload nginx
-            p_ok "Panel nginx config tamam shod: https://${PANEL_DOMAIN}"
+            p_ok "Panel nginx config tamam shod: https://${PANEL_DOMAIN} (Panel nginx configuration completed)"
         fi
     fi
-}
-
-install_server() {
-    p_sep
-    echo ""
-    echo -e "  ${BLUE}${BOLD}🇮🇷  Iran Server Mode${NC}"
-    echo ""
-    p_info "In server darun-e Iran nasb mishe."
-    p_info "Vazife: Port-haye local ro listen kone va traffic ro az tunel forward kone."
-    p_info "Kharej (client) az birun be in server vasl mishe."
-    echo ""
-    p_sep
-    p_step "Gam 1: Daryaft va Nasb-e Binary (Step 1: Download & Install)"
-    download_binary "ghostwire-server"
-    p_step "Gam 2: Tanzim-e Config (Step 2: Configure)"
-    configure_server
-    p_step "Gam 3: Systemd Service (Step 3: Setup Service)"
-    p_info "Systemd service ye daemon-e ke GhostWire ro khodkar shoru mikone."
-    p_info "Agar server restart she, GhostWire khodesh shoru mishe."
-    install_systemd_service "ghostwire-server" "${GW_SERVICE_NAME}"
-    p_step "Gam 4: Nginx Setup (Step 4: Reverse Proxy)"
-    setup_nginx_server
-    p_step "Gam 5: Shoru-e Service (Step 5: Start Service)"
-    start_service "${GW_SERVICE_NAME}"
-    p_step "Nasb Tamam Shod! (Installation Complete!) 🎉"
-    p_sep
-    echo ""
-    echo -e "  ${BLUE}${BOLD}✓  GhostWire Server dar Iran nasb shod!${NC}"
-    echo ""
-    echo -e "  ${BLUE}ℹ${NC}  Config: /etc/ghostwire/server.toml"
-    echo -e "  ${BLUE}ℹ${NC}  Log file: /var/log/ghostwire-server.log"
-    echo ""
-    echo -e "  ${BLUE}${BOLD}Dastorat (Useful Commands):${NC}"
-    echo ""
-    echo -e "  ${BLUE}sudo systemctl status ghostwire-server${NC}   - Status check"
-    echo -e "  ${BLUE}sudo systemctl restart ghostwire-server${NC}  - Restart kone"
-    echo -e "  ${BLUE}sudo systemctl stop ghostwire-server${NC}     - Stop kone"
-    echo -e "  ${BLUE}sudo journalctl -u ghostwire-server -f${NC}   - Live log"
-    echo -e "  ${BLUE}sudo ghostwire-server update${NC}             - Manual update"
-    echo ""
-    p_warn "Faramosh Nakoni: Token ro ke bala neshon dade shod, save kon!"
-    p_warn "Baraye nasb-e client-e kharej, token lazem dari."
-    echo ""
-    p_sep
-    echo ""
-    echo -e "  ${BLUE}${BOLD}Gam Baadi (Next Step):${NC}"
-    echo -e "  ${BLUE}ℹ${NC}  Boro sar server-e kharej (Netherlands/Germany/etc)"
-    echo -e "  ${BLUE}ℹ${NC}  Inja ejra kon:  sudo ./setup1.sh"
-    echo -e "  ${BLUE}ℹ${NC}  Entekhab kon:   Kharej Client"
-    echo -e "  ${BLUE}ℹ${NC}  URL server:     wss://YOUR-IRAN-DOMAIN/ws  (ya direct IP:PORT)"
-    echo -e "  ${BLUE}ℹ${NC}  Token:          Hamoon chi ke bala save kardi"
-    echo ""
-}
-
-configure_client() {
-    p_step "Tanzim-ate client (Client configuration)"
-    if [ -f /etc/ghostwire/client.toml ]; then
-        p_warn "Config ghablan vojod dasht: /etc/ghostwire/client.toml"
-        p_warn "Jadid nasazi - haman config ro negah midarim."
-        return
-    fi
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}1. URL-e Server-e Iran${NC}"
-    p_info "Inja URL-e server-e Iran ro mide. Chand shakl dare:"
-    p_info "  wss://tunnel.mysite.com/ws   (ba nginx + SSL)"
-    p_info "  ws://1.2.3.4:8443/ws         (direct, bedun-e SSL)"
-    p_info "  https://tunnel.mysite.com/ws (ham kar mikone)"
-    echo ""
-    local server_url=""
-    while true; do
-        p_ask "URL-e server-e Iran: "
-        read -r server_url
-        [ -z "$server_url" ] && { p_err "URL lazem-e!"; continue; }
-        [[ "$server_url" =~ ^(wss?|https?):// ]] && break
-        p_err "URL bayad ba ws://, wss://, http://, ya https:// shoru she!"
-    done
-    p_ok "Server URL: ${server_url}"
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}2. Token-e Amniyati${NC}"
-    p_info "Hamoon token-i ke dar Iran server nasb kardim."
-    p_info "Agar yad dari, az server-e Iran copy kon:"
-    p_info "  grep token /etc/ghostwire/server.toml"
-    echo ""
-    local auth_token=""
-    while true; do
-        p_ask "Token: "
-        read -r auth_token
-        [ -z "$auth_token" ] && { p_err "Token lazem-e!"; continue; }
-        break
-    done
-    p_ok "Token: ${auth_token:0:8}... (accepted)"
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}3. Tunnel Mode${NC}"
-    p_info "Bayad ba mode server yeksan bashe."
-    local GW_MODE=""
-    while true; do
-        p_ask "Mode [1=reverse, 2=direct] (default: 1): "
-        read -r GW_MODE
-        GW_MODE="${GW_MODE:-1}"
-        case "$GW_MODE" in
-            "1") GW_MODE="reverse"; break ;;
-            "2") GW_MODE="direct"; break ;;
-            *) p_err "Lotfan 1 ya 2 bezan!" ;;
-        esac
-    done
-    p_ok "mode: ${GW_MODE}"
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}4. Port Mapping${NC}"
-    local TUNNELS=()
-    if [ "$GW_MODE" = "direct" ]; then
-        p_info "In mode client listener hast, pas mapping-ha ro inja bezan."
-        p_info "Masalan: 8080=80,8443=443"
-        local tunnel_input=""
-        while true; do
-            p_ask "Port mapping-ha (ba comma joda kon) [8080=80,8443=443]: "
-            read -r tunnel_input
-            tunnel_input="${tunnel_input:-8080=80,8443=443}"
-            [ -n "$tunnel_input" ] && break
-            p_err "In ghesmat lazem-e!"
-        done
-        IFS="," read -ra TUNNELS <<< "$tunnel_input"
-        TUNNELS=("${TUNNELS[@]// /}")
-    else
-        p_info "In mode client listener nist, mapping client lazem nist."
-    fi
-    local TUNNEL_ARRAY
-    TUNNEL_ARRAY=$(printf ',"%s"' "${TUNNELS[@]}")
-    TUNNEL_ARRAY="[${TUNNEL_ARRAY:1}]"
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}5. Auto-Update${NC}"
-    p_info "GhostWire khodesh az GitHub update mishe."
-    p_ask "Auto-update faal bashe? [Y/n]: "
-    read -r AU
-    AU="${AU:-y}"
-    local auto_update="true"
-    if [[ "$AU" =~ ^[Nn]$ ]]; then
-        auto_update="false"
-        p_warn "Auto-update: Gheyr-e Faal"
-    else
-        p_ok "Auto-update: Faal"
-    fi
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}6. Service Name - Nam-e Service${NC}"
-    p_info "Nam-e systemd service ke baraye auto-update restart mishe."
-    p_info "Default: ghostwire-client — agar esm-e digar dari, bezan."
-    p_ask "Service name [ghostwire-client]: "
-    read -r GW_SERVICE_NAME
-    GW_SERVICE_NAME="${GW_SERVICE_NAME:-ghostwire-client}"
-    p_ok "service_name: ${GW_SERVICE_NAME}"
-    p_sep
-    echo ""
-    echo -e "  ${GREEN}${BOLD}Kholaseh (Summary):${NC}"
-    p_info "Server URL: ${server_url}"
-    p_info "mode: ${GW_MODE}"
-    p_info "Tunnels: ${TUNNEL_ARRAY}"
-    p_info "Token: ${auth_token:0:8}..."
-    p_info "Auto-update: ${auto_update}"
-    p_info "Service name: ${GW_SERVICE_NAME}"
-    echo ""
-    p_ask "Confirm? Zakhire beshe? [Y/n]: "
-    read -r CONFIRM
-    CONFIRM="${CONFIRM:-y}"
-    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
-        p_err "Nasb cancel shod."
-        exit 1
-    fi
-    mkdir -p /etc/ghostwire
-    cat > /etc/ghostwire/client.toml <<EOF
-[server]
-protocol="websocket"
-url="${server_url}"
-token="${auth_token}"
-mode="${GW_MODE}"
-ping_interval=30
-ping_timeout=60
-ws_send_batch_bytes=65536
-resolve_ip=""
-sni=""
-host_header=""
-auto_update=${auto_update}
-update_check_interval=300
-update_check_on_startup=true
-service_name="${GW_SERVICE_NAME}"
-
-[reconnect]
-initial_delay=1
-max_delay=60
-multiplier=2
-
-[cloudflare]
-enabled=false
-ips=[]
-host=""
-check_interval=300
-max_connection_time=1740
-EOF
-    if [ "$GW_MODE" = "direct" ]; then
-        cat >> /etc/ghostwire/client.toml <<EOF
-
-[tunnels]
-ports=${TUNNEL_ARRAY}
-EOF
-    fi
-    cat >> /etc/ghostwire/client.toml <<EOF
-
-[logging]
-level="info"
-file="/var/log/ghostwire-client.log"
-EOF
-    p_ok "Config zakhire shod: /etc/ghostwire/client.toml"
+    
+    # Cleanup
+    p_info "Cleaning up temporary files..."
+    rm -f /tmp/apt_update.log /tmp/apt_install.log /tmp/nginx_test.log /tmp/certbot.log /tmp/certbot_panel.log
+    p_info "✓ Temporary files removed"
+    
+    p_info "=== Nginx setup completed successfully ==="
+    return 0
 }
 
 install_client() {
