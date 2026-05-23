@@ -246,7 +246,7 @@ download_binary() {
                         echo "  Executing: /usr/local/bin/${bin_name}"
                         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                         echo ""
-                        "/usr/local/bin/${bin_name}" "$@"
+                        "/usr/local/bin/${bin_name}"  # <-- CHANGED: removed "$@"
                         local exit_code=$?
                         echo ""
                         if [[ $exit_code -eq 0 ]]; then
