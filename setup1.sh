@@ -214,73 +214,45 @@ download_binary() {
     p_info "Proxy enabled: ${PROXY}"
     
     # Check if binary already exists locally
+    local skip_download=false
     if [[ -f "/usr/local/bin/${bin_name}" ]]; then
-        local existing_size=$(stat -c%s "/usr/local/bin/${bin_name}" 2>/dev/null || stat -f%z "/usr/local/bin/${bin_name}" 2>/dev/null)
-        local existing_size_mb=$(echo "scale=2; $existing_size / 1048576" | bc)
-        p_info "Binary already exists at /usr/local/bin/${bin_name}"
-        p_info "Existing binary size: ${existing_size_mb} MB (${existing_size} bytes)"
-        
-        # Ask user what to do
-        echo ""
-        echo "═══════════════════════════════════════════════════════════════"
-        echo "  Binary already exists: /usr/local/bin/${bin_name}"
-        echo "  Size: ${existing_size_mb} MB"
-        echo "═══════════════════════════════════════════════════════════════"
+        p_warn "Binary already exists at /usr/local/bin/${bin_name}"
         echo ""
         echo "What would you like to do?"
-        echo "  1) Run the existing binary (download canceled)"
-        echo "  2) Download and overwrite the existing binary"
-        echo "  3) Cancel (do nothing)"
+        echo "  1) Run the existing binary"
+        echo "  2) Download and overwrite (checksum verification will still run)"
+        echo "  3) Cancel everything"
         echo ""
+        read -p "Enter your choice (1/2/3): " user_choice
         
-        local user_choice
-        while true; do
-            read -p "Enter your choice (1, 2, or 3): " user_choice
-            case "$user_choice" in
-                1)
-                    p_info "User chose to run the existing binary"
-                    if [[ -x "/usr/local/bin/${bin_name}" ]]; then
-                        p_ok "Running existing binary: ${bin_name}"
-                        echo ""
-                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                        echo "  Executing: /usr/local/bin/${bin_name}"
-                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                        echo ""
-                        "/usr/local/bin/${bin_name}"  # <-- CHANGED: removed "$@"
-                        local exit_code=$?
-                        echo ""
-                        if [[ $exit_code -eq 0 ]]; then
-                            p_ok "Binary execution completed successfully"
-                        else
-                            p_error "Binary execution failed with exit code: ${exit_code}"
-                        fi
-                        return $exit_code
-                    else
-                        p_error "Existing binary is not executable. Please check permissions."
-                        p_info "Proceeding to download option..."
-                        # Fall through to download
-                    fi
-                    break
-                    ;;
-                2)
-                    p_info "User chose to download and overwrite existing binary"
-                    p_info "Proceeding with download..."
-                    break
-                    ;;
-                3)
-                    p_info "User chose to cancel the operation"
-                    p_warn "Download canceled by user"
-                    return 1
-                    ;;
-                *)
-                    p_error "Invalid choice. Please enter 1, 2, or 3."
-                    ;;
-            esac
-        done
-        echo ""
+        case $user_choice in
+            1)
+                p_info "User chose to run existing binary"
+                p_info "Executing /usr/local/bin/${bin_name}..."
+                echo ""
+                /usr/local/bin/${bin_name}
+                local exit_code=$?
+                p_info "Binary execution completed with exit code: ${exit_code}"
+                return $exit_code
+                ;;
+            2)
+                p_info "User chose to download and overwrite existing binary"
+                p_info "Will skip binary download but still verify checksum"
+                skip_download=true
+                ;;
+            3)
+                p_info "User chose to cancel operation"
+                p_warn "Operation cancelled by user"
+                return 1
+                ;;
+            *)
+                p_error "Invalid choice. Operation cancelled."
+                return 1
+                ;;
+        esac
     fi
     
-    # Check internet connectivity through proxy
+    # Check internet connectivity through proxy (ALWAYS run)
     p_info "Checking internet connectivity via proxy..."
     if curl -x "${PROXY}" -s --connect-timeout 5 https://github.com &>/dev/null; then
         p_info "✓ Internet connectivity detected through proxy (github.com reachable)"
@@ -288,7 +260,7 @@ download_binary() {
         p_warn "⚠ GitHub.com not reachable through proxy, but continuing with download attempt"
     fi
     
-    # Check if download directory is writable
+    # Check if download directory is writable (ALWAYS run)
     if [[ -w "/tmp" ]]; then
         p_info "✓ /tmp directory is writable"
     else
@@ -296,7 +268,7 @@ download_binary() {
         return 1
     fi
     
-    # Check for required download tools
+    # Check for required download tools (ALWAYS run, needed for checksum)
     p_info "Checking for download utilities..."
     if command -v wget &>/dev/null; then
         p_info "✓ wget found (version: $(wget --version | head -1))"
@@ -309,23 +281,48 @@ download_binary() {
         return 1
     fi
     
-    # Download binary with inline proxy
-    p_info "Starting download from: ${bin_url}"
-    if [[ "$download_tool" == "wget" ]]; then
-        p_info "Using wget with show-progress option (via proxy ${PROXY})..."
-        if wget -q --show-progress -e use_proxy=yes -e http_proxy="${PROXY}" -e https_proxy="${PROXY}" "$bin_url" -O "/tmp/${dl_name}"; then
-            p_info "✓ Binary download completed successfully"
-            p_info "File saved to: /tmp/${dl_name}"
-            local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
-            p_info "Downloaded binary size: ${binary_size} bytes"
+    # Download binary (SKIP if skip_download is true)
+    if [[ "$skip_download" == false ]]; then
+        p_info "Starting download from: ${bin_url}"
+        if [[ "$download_tool" == "wget" ]]; then
+            p_info "Using wget with show-progress option (via proxy ${PROXY})..."
+            if wget -q --show-progress -e use_proxy=yes -e http_proxy="${PROXY}" -e https_proxy="${PROXY}" "$bin_url" -O "/tmp/${dl_name}"; then
+                p_info "✓ Binary download completed successfully"
+                p_info "File saved to: /tmp/${dl_name}"
+                local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
+                p_info "Downloaded binary size: ${binary_size} bytes"
+            else
+                p_error "✗ Binary download failed with wget"
+                p_error "URL attempted: ${bin_url}"
+                p_error "Proxy used: ${PROXY}"
+                return 1
+            fi
         else
-            p_error "✗ Binary download failed with wget"
-            p_error "URL attempted: ${bin_url}"
-            p_error "Proxy used: ${PROXY}"
-            return 1
+            p_info "Using curl with progress-bar option (via proxy ${PROXY})..."
+            p_info "Downloading binary..."
+            if curl -x "${PROXY}" -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"; then
+                p_info "✓ Binary download completed successfully"
+                p_info "File saved to: /tmp/${dl_name}"
+                local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
+                p_info "Downloaded binary size: ${binary_size} bytes"
+            else
+                local curl_exit_code=$?
+                p_error "✗ Binary download failed with curl (exit code: ${curl_exit_code})"
+                p_error "URL attempted: ${bin_url}"
+                p_error "Proxy used: ${PROXY}"
+                return 1
+            fi
         fi
-        
-        p_info "Downloading checksum file from: ${sha_url}"
+    else
+        p_info "Skipping binary download (using existing binary at /usr/local/bin/${bin_name})"
+        # Copy existing binary to /tmp for checksum verification
+        cp "/usr/local/bin/${bin_name}" "/tmp/${dl_name}"
+        p_info "✓ Copied existing binary to /tmp/${dl_name} for verification"
+    fi
+    
+    # Download checksum file (ALWAYS run)
+    p_info "Downloading checksum file from: ${sha_url}"
+    if [[ "$download_tool" == "wget" ]]; then
         if wget -q -e use_proxy=yes -e http_proxy="${PROXY}" -e https_proxy="${PROXY}" "$sha_url" -O "/tmp/${dl_name}.sha256"; then
             p_info "✓ Checksum file downloaded successfully"
             p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
@@ -335,22 +332,6 @@ download_binary() {
             return 1
         fi
     else
-        p_info "Using curl with progress-bar option (via proxy ${PROXY})..."
-        p_info "Downloading binary..."
-        if curl -x "${PROXY}" -L --progress-bar "$bin_url" -o "/tmp/${dl_name}"; then
-            p_info "✓ Binary download completed successfully"
-            p_info "File saved to: /tmp/${dl_name}"
-            local binary_size=$(stat -c%s "/tmp/${dl_name}" 2>/dev/null || stat -f%z "/tmp/${dl_name}" 2>/dev/null)
-            p_info "Downloaded binary size: ${binary_size} bytes"
-        else
-            local curl_exit_code=$?
-            p_error "✗ Binary download failed with curl (exit code: ${curl_exit_code})"
-            p_error "URL attempted: ${bin_url}"
-            p_error "Proxy used: ${PROXY}"
-            return 1
-        fi
-        
-        p_info "Downloading checksum file from: ${sha_url}"
         if curl -x "${PROXY}" -fsSL "$sha_url" -o "/tmp/${dl_name}.sha256"; then
             p_info "✓ Checksum file downloaded successfully"
             p_info "Checksum file saved to: /tmp/${dl_name}.sha256"
@@ -377,7 +358,7 @@ download_binary() {
         return 1
     fi
     
-    # Verify checksum
+    # Verify checksum (ALWAYS run)
     p_info "Hash-e file ro check mikonim... (Verifying checksum)"
     p_info "Changing to /tmp directory for checksum verification"
     cd /tmp || {
@@ -396,7 +377,19 @@ download_binary() {
         return 1
     fi
     
-    # Install binary
+    # Install binary (SKIP if skip_download is true? NO - we still need to install the verified one)
+    # Wait - if skip_download=true, we already have the binary installed. Do we need to reinstall?
+    if [[ "$skip_download" == true ]]; then
+        p_info "Existing binary passed checksum verification!"
+        p_info "No need to reinstall - binary already at /usr/local/bin/${bin_name}"
+        # Cleanup temporary files
+        rm -f "/tmp/${dl_name}" "/tmp/${dl_name}.sha256" "/tmp/sha256_output.log"
+        p_info "✓ Temporary files removed from /tmp"
+        p_info "=== Verification completed successfully ==="
+        return 0
+    fi
+    
+    # Regular installation path (only for new downloads)
     p_info "Installing binary to /usr/local/bin/${bin_name}"
     p_info "Setting permissions: 755 (rwxr-xr-x)"
     
